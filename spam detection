@@ -1,0 +1,73 @@
+# Step 1: Import Libraries
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
+from imblearn.over_sampling import SMOTE
+import xgboost as xgb
+import seaborn as sns
+import matplotlib.pyplot as plt
+import shap
+
+# Step 2: Load Dataset
+df = pd.read_csv('/kaggle/input/fraud-detection/fraudTrain.csv')
+
+# Step 3: Feature Engineering
+df['trans_date_trans_time'] = pd.to_datetime(df['trans_date_trans_time'])
+df['hour'] = df['trans_date_trans_time'].dt.hour
+df['day'] = df['trans_date_trans_time'].dt.day
+df['month'] = df['trans_date_trans_time'].dt.month
+df['year'] = df['trans_date_trans_time'].dt.year
+
+# New features
+df['dob'] = pd.to_datetime(df['dob'])
+df['age'] = df['trans_date_trans_time'].dt.year - df['dob'].dt.year
+df['amt_per_pop'] = df['amt'] / (df['city_pop'] + 1)
+df['merchant_distance'] = np.sqrt((df['lat'] - df['merch_lat'])**2 + (df['long'] - df['merch_long'])**2)
+
+# Step 4: Encode Categorical Variables
+label_cols = ['merchant', 'category', 'gender', 'job', 'city', 'state']
+for col in label_cols:
+    df[col] = LabelEncoder().fit_transform(df[col])
+
+# Step 5: Drop Unnecessary Columns
+drop_cols = ['Unnamed: 0', 'trans_date_trans_time', 'trans_num', 'unix_time', 'dob', 'first', 'last', 'street']
+df.drop(columns=drop_cols, inplace=True)
+
+# Step 6: Split Features and Target
+X = df.drop('is_fraud', axis=1)
+y = df['is_fraud']
+
+# Step 7: Train-Test Split and SMOTE
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+sm = SMOTE(random_state=42)
+X_res, y_res = sm.fit_resample(X_train, y_train)
+
+# Step 8: Feature Scaling
+scaler = StandardScaler()
+X_res_scaled = scaler.fit_transform(X_res)
+X_test_scaled = scaler.transform(X_test)
+
+# Step 9: Model Training with XGBoost
+model = xgb.XGBClassifier(eval_metric='logloss')
+model.fit(X_res_scaled, y_res)
+
+# Step 10: Prediction & Evaluation
+y_pred = model.predict(X_test_scaled)
+print(classification_report(y_test, y_pred))
+print("ROC AUC Score:", roc_auc_score(y_test, y_pred))
+
+# Confusion Matrix
+sns.heatmap(confusion_matrix(y_test, y_pred), annot=True, fmt='d', cmap='Blues')
+plt.title("Confusion Matrix")
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.show()
+
+# Step 11: Explainability with SHAP
+explainer = shap.Explainer(model)
+shap_values = explainer(X_test_scaled[:100])  # speed up with 100 samples
+shap.plots.waterfall(shap_values[0])
+shap.plots.beeswarm(shap_values)
+shap.summary_plot(shap_values, X_test[:100], feature_names=X.columns)
